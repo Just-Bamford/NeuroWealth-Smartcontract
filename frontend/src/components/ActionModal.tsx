@@ -38,7 +38,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [txSuccess, setTxSuccess] = useState<boolean>(false);
   const [txHash, setTxHash] = useState<string>('');
-  const [txError, setTxError] = useState<string>('');
+
 
   if (!isOpen) return null;
 
@@ -51,7 +51,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
 
     setLoading(true);
     setTxSuccess(false);
-    setTxError('');
+
 
     try {
       const server = new Server(RPC_URL);
@@ -94,7 +94,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
       }
     } catch (err: any) {
       console.error('Transaction execution failed:', err);
-      setTxError(err?.message || 'Transaction failed unexpectedly.');
+
     } finally {
       setLoading(false);
     }
@@ -104,7 +104,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
     setAmount('');
     setTxSuccess(false);
     setTxHash('');
-    setTxError('');
+
     onClose();
   };
 
@@ -203,10 +203,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
               </div>
             </div>
 
-            {txError && (
-              <div className="mb-4 flex items-start gap-2 text-xs text-red-400 bg-red-500/10 p-3 rounded-xl border border-red-500/20">
-                <ShieldAlert size={16} className="mt-0.5 shrink-0" />
-                <span>{txError}</span>
+
               </div>
             )}
 
