@@ -99,6 +99,9 @@ at startup.
 | `PORT` | no | `3000` | HTTP port for Express. |
 | `ENCRYPTION_KEY` | **yes in any shared or prod environment** | insecure built-in string | Secret used to derive the AES-256-GCM key for custodial secrets. Use ≥ 32 random bytes. Rotating it makes existing encrypted secrets undecryptable. |
 | `PHONE_HASH_SALT` | **yes in any shared or prod environment** | insecure built-in string | Salt for SHA-256 phone hashing. Changing it orphans every existing session and wallet. |
+| `TWILIO_AUTH_TOKEN` | **yes** | — | Verifies the `X-Twilio-Signature` header on every webhook request (`src/twilioSignature.ts`). If unset, every webhook request is rejected with `500`. |
+| `TWILIO_WEBHOOK_URL` | behind a proxy/tunnel | reconstructed from the request | Public webhook URL exactly as configured in the Twilio console. Twilio signs this URL, so it must match byte for byte. |
+| `TWILIO_SKIP_SIGNATURE_VALIDATION` | no | `false` | `true` disables signature checks for local testing with curl. Ignored when `NODE_ENV=production`. |
 | `SOROBAN_RPC_URL` | no | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint for vault calls. |
 | `VAULT_CONTRACT_ID` | yes outside testnet demos | a testnet contract id | Vault contract address. |
 | `VAULT_MIN_DEPOSIT` | no | `1000000` (0.1 USDC) | Min single deposit, **in stroops**. Mirror `get_min_deposit`. |
@@ -110,16 +113,19 @@ Invalid `VAULT_*` values (non-integer, zero or negative) make `validateIntent`
 throw, so the webhook replies with the generic error message rather than
 silently using a wrong limit.
 
-Twilio credentials are **not** read today, because replies are sent as TwiML
-in the webhook response. `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and
-`TWILIO_WHATSAPP_NUMBER` become required once request-signature validation or
-outbound (non-reply) messages are added (see gaps below).
+Replies are sent as TwiML in the webhook response, so only `TWILIO_AUTH_TOKEN`
+is needed today. `TWILIO_ACCOUNT_SID` and `TWILIO_WHATSAPP_NUMBER` become
+required once outbound (non-reply) messages are added.
+
+Requests without a valid `X-Twilio-Signature` are rejected with `403` before
+they reach the state machine, so a caller cannot impersonate a phone number by
+posting a forged `From`.
 
 ## Running locally
 
 ```bash
 cd whatsapp
-cp .env.example .env      # then fill in ENCRYPTION_KEY and PHONE_HASH_SALT
+cp .env.example .env      # then fill in ENCRYPTION_KEY, PHONE_HASH_SALT and TWILIO_AUTH_TOKEN
 npm install
 npm run dev               # ts-node src/index.ts
 npm test                  # tsc + node:test (intent validation tests)
@@ -128,7 +134,7 @@ ngrok http 3000           # expose the webhook
 
 In the Twilio console (Messaging → WhatsApp sandbox or sender), set **"When a
 message comes in"** to `https://<ngrok-host>/api/whatsapp/webhook`, method
-`POST`. `GET /health` returns `{"status":"ok"}` for liveness checks.
+`POST`, and set `TWILIO_WEBHOOK_URL` to that same URL. `GET /health` returns `{"status":"ok"}` for liveness checks.
 
 ## Security notes and known gaps
 
@@ -141,9 +147,6 @@ real funds:
 - **OTP is echoed in chat.** The welcome message includes the OTP for demo
   purposes, so it does not prove ownership of the phone. Deliver the OTP over a
   separate channel (SMS / Twilio Verify) and remove it from the reply.
-- **No Twilio signature validation.** Anyone who can reach the endpoint can
-  impersonate a phone number. Validate `X-Twilio-Signature` with
-  `twilio.validateRequest` / `twilio.webhook()` using `TWILIO_AUTH_TOKEN`.
 - **Insecure defaults.** `ENCRYPTION_KEY` and `PHONE_HASH_SALT` fall back to
   hard-coded strings, and `scrypt` uses a fixed salt. Fail fast at startup when
   they are unset in production.

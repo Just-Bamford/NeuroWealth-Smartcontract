@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { startEventListener, stopEventListener, server, pool } from './eventListener';
 import { evaluateYield } from './yieldComparison';
+import { runRebalanceCycle } from './userStrategies';
 import healthRouter, { configureHealthChecks } from './health';
 import logger from './logger';
 import { initializeTracing } from './tracing';
@@ -50,11 +51,21 @@ function startDecisionLoop() {
   decisionInterval = setInterval(async () => {
     try {
       logger.info('Running hourly yield evaluation');
-      const decision = await evaluateYield('balanced', 'blend', 6.5);
+      if (!process.env.DATABASE_URL) {
+        logger.warn('DATABASE_URL is not set; cannot load user strategies, skipping hourly evaluation');
+        return;
+      }
 
-      if (decision.shouldRebalance) {
-        logger.info({ targetProtocol: decision.targetProtocol }, 'Rebalance needed');
-      } else {
+      // Each user's strategy comes from users.strategy_preference and the
+      // current position from the latest rebalances row (#749).
+      const { usersEvaluated, decisions } = await runRebalanceCycle(pool, evaluateYield);
+      const rebalanceNeeded = [...decisions.values()].some((d) => d.shouldRebalance);
+      logger.info(
+        { usersEvaluated, strategies: Object.fromEntries(decisions) },
+        'Hourly yield evaluation complete',
+      );
+
+      if (usersEvaluated > 0 && !rebalanceNeeded) {
         console.log(`Hourly check: Yield is optimal. No action needed.`);
         // Yield is already in the best protocol; compound it for maximum growth
         await autoCompound(0);

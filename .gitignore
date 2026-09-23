@@ -78,3 +78,6 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.bak
+
+# Agent local state (ledger cursor fallback)
+.agent-state/
