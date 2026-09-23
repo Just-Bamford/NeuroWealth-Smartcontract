@@ -1,5 +1,3 @@
-import { fetchVaultState } from '../../frontend/src/lib/stellar'; // Assume mock integration
-
 export interface AlertRule {
     name: string;
     description: string;

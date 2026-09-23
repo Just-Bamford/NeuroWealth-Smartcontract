@@ -32,12 +32,13 @@ for agent keys.
 
 ## Enforcement
 
-Two independent layers keep secrets out of the repository going forward:
+Three layers keep secrets out of the repository going forward:
 
 ### 1. Pre-commit hook (developer machines)
 
-[`scripts/pre-commit-gitleaks.sh`](../scripts/pre-commit-gitleaks.sh) scans
-**staged** changes with the repo ruleset and blocks the commit on any hit.
+[`scripts/pre-commit-gitleaks.sh`](../scripts/pre-commit-gitleaks.sh) runs the
+env-template policy check (below) and then scans **staged** changes with the
+gitleaks repo ruleset, blocking the commit on any hit.
 Install it once per clone:
 
 ```bash
@@ -51,12 +52,31 @@ rather than silently skipping the scan (`brew install gitleaks` /
 ### 2. CI gate (all pull requests and pushes)
 
 The `secret-scan` job in
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs
-`gitleaks/gitleaks-action@v2` with full history (`fetch-depth: 0`) on every
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the pinned,
+checksum-verified gitleaks CLI (v8.30.1 — not `gitleaks-action`, which needs
+a paid license on organization repos) with full history (`fetch-depth: 0`) on every
 PR targeting `main`/`develop`, every push to those branches and `feat/**`,
 and the weekly scheduled run — so a leak that slips past a developer's
 hooks is still caught before merge, and the whole history is re-swept
 weekly as rules improve.
+
+### 3. Env template & key-file policy (#766)
+
+[`scripts/check-env-templates.py`](../scripts/check-env-templates.py) runs in
+both the pre-commit hook (`--staged`, scanning the index) and the CI
+`secret-scan` job (all tracked files). It enforces what a generic ruleset
+cannot:
+
+| Check | Fails on |
+|-------|----------|
+| Real env files | Any `.env`, `.env.<name>` or `<name>.env` that is not a `*.template` / `*.example` / `*.sample` |
+| Key files | `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.secret`, `id_rsa`/`id_ed25519`/… |
+| Template values | A secret-looking variable (`*SECRET*`, `*_KEY`, `*TOKEN*`, `*PASSWORD*`, `*SALT*`, `*SEED*`, `*MNEMONIC*`, `*WEBHOOK*`) with a value that is not empty or a placeholder (`S...`, `<your-value>`, `your-…`, `${VAR}`, `changeme`, …). Public identifiers (`*_ADDRESS`, `*_ID`) are exempt |
+| Template content (comments too) | Stellar secret seeds (except `SXXXX…` placeholders), PEM private keys, raw `0x` + 64-hex keys, AWS / OpenAI / Slack / Twilio tokens, and real credentials in URLs (`user:password@` placeholders are allowed) |
+
+Run it locally with `python3 scripts/check-env-templates.py`. The same
+patterns are in `.gitignore`, so such files are also hard to stage by
+accident.
 
 ## Rules of thumb
 

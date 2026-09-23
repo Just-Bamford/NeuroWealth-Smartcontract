@@ -4,6 +4,18 @@ The NeuroWealth agent is an autonomous background service that continuously moni
 
 ---
 
+## Development scripts (#773)
+
+| Script | What it does |
+|--------|--------------|
+| `npm run build` | Compiles `src/` to `dist/` (`tsconfig.build.json`, test files excluded) |
+| `npm run typecheck` | `tsc --noEmit` over all sources and tests |
+| `npm run lint` / `lint:fix` | ESLint (`eslint.config.mjs`, typescript-eslint recommended) |
+| `npm test` | Runs every `src/*.test.ts` with the `node:test` runner |
+| `npm run check` | typecheck + lint + test — what CI runs |
+
+---
+
 ## Key Modules
 
 - **Yield Comparison Engine** (`src/yieldComparison.ts`): Aggregates real-time and historical (7d/30d/90d) APYs, calculating risk-adjusted return ratios (Sharpe-like metric) and enforcing the 0.5% minimum improvement threshold.

@@ -19,9 +19,10 @@ env:
   WASM_SIZE_LIMIT_BYTES: 1500000
 
 jobs:
-  # Secret scan (#605): fails the build if any commit in the PR (or push)
-  # introduces a Stellar secret seed, .env contents, or anything else the
-  # gitleaks ruleset in .gitleaks.toml matches. Full history is fetched so
+  # Secret scan (#605, #766): fails the build if any commit in the PR (or
+  # push) introduces a Stellar secret seed, .env contents, or anything else
+  # the gitleaks ruleset in .gitleaks.toml matches, or if a committed env
+  # template / key file breaks scripts/check-env-templates.py. Full history is fetched so
   # every commit in the range is scanned, not just the merge result.
   secret-scan:
     name: Secret Scan (gitleaks)
@@ -34,11 +35,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+      - name: Env templates & key files policy (#766)
+        run: python3 scripts/check-env-templates.py
+
+      # The gitleaks CLI is used directly (pinned + checksum-verified) rather
+      # than gitleaks-action, which requires a paid GITLEAKS_LICENSE on
+      # organization-owned repositories.
+      - name: Install gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "${base}/${tarball}"
+          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " ${tarball}$" | sha256sum -c -
+          tar -xzf "${tarball}" gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Run gitleaks (full history)
+        run: gitleaks git --redact -v --config .gitleaks.toml .
 
   ci-matrix:
     name: CI Matrix
@@ -68,6 +85,9 @@ jobs:
           - name: "Frontend Lint"
             step: "frontend-lint"
             working_directory: "frontend"
+          - name: "Agent Typecheck, Lint & Tests"
+            step: "agent-check"
+            working_directory: "agent"
           - name: "Build WASM"
             step: "build-wasm"
             working_directory: "neurowealth-vault"
@@ -158,6 +178,13 @@ jobs:
             frontend-lint)
               npm ci
               npm run lint
+              ;;
+            agent-check)
+              npm ci
+              npm run typecheck
+              npm run lint
+              npm test
+              npm run build
               ;;
             build-wasm)
               RUSTFLAGS="-C target-cpu=mvp" cargo build \
@@ -414,6 +441,7 @@ jobs:
     outputs:
       contract: ${{ steps.filter.outputs.contract }}
       vault_src: ${{ steps.filter.outputs.vault_src }}
+      share_math: ${{ steps.filter.outputs.share_math }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -426,6 +454,8 @@ jobs:
               - 'neurowealth-vault/**'
             vault_src:
               - 'neurowealth-vault/contracts/vault/src/**'
+            share_math:
+              - 'neurowealth-vault/share-math/**'
 
   fuzz:
     name: Fuzz ${{ matrix.target }}
@@ -468,6 +498,47 @@ jobs:
         if: github.event_name == 'schedule'
         working-directory: neurowealth-vault
         run: cargo fuzz run ${{ matrix.target }} -- -runs=5000 -max_total_time=300
+
+  # Withdrawal-queue share accounting (#777). Fuzzes the pure share-math
+  # queue model from its own standalone cargo-fuzz project, so it builds
+  # without the Soroban contract crate.
+  fuzz-withdrawal-queue:
+    name: Fuzz withdrawal_queue_invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [changes]
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && needs.changes.outputs.share_math == 'true')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: neurowealth-vault/share-math/fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Stable randomized invariant test
+        working-directory: neurowealth-vault
+        run: cargo test -p share-math queue
+
+      - name: Run fuzz target (PR – short bounds)
+        if: github.event_name == 'pull_request'
+        working-directory: neurowealth-vault
+        run: cargo fuzz run --fuzz-dir share-math/fuzz withdrawal_queue_invariants -- -max_total_time=120
+
+      - name: Run fuzz target (scheduled / manual – full bounds)
+        if: github.event_name != 'pull_request'
+        working-directory: neurowealth-vault
+        run: cargo fuzz run --fuzz-dir share-math/fuzz withdrawal_queue_invariants -- -max_total_time=600
 
   e2e-devnet:
     name: E2E Devnet Validation

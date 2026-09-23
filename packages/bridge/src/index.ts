@@ -2,7 +2,11 @@
  * Cross-chain bridge module exports
  */
 
-export { BridgeManager } from "./bridge-manager";
+export {
+  BridgeManager,
+  ALLOWED_TRANSITIONS,
+  canTransition,
+} from "./bridge-manager";
 export { InMemoryBridgeStore, SqlBridgeStore } from "./bridge-store";
 export { BridgeMonitor } from "./bridge-monitor";
 

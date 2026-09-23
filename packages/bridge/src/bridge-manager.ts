@@ -15,6 +15,24 @@ import {
   StoredBridgeTransfer,
 } from "./types";
 
+/**
+ * Allowed status transitions. `confirmed` and `cancelled` are terminal;
+ * `failed` can only go back to `pending` via an explicit retry. Once a
+ * transfer is `confirming` its Axelar message is in flight, so it can no
+ * longer be cancelled locally.
+ */
+export const ALLOWED_TRANSITIONS: Record<BridgeStatus, readonly BridgeStatus[]> = {
+  pending: ["confirming", "failed", "cancelled"],
+  confirming: ["confirmed", "failed"],
+  failed: ["pending"],
+  confirmed: [],
+  cancelled: [],
+};
+
+export function canTransition(from: BridgeStatus, to: BridgeStatus): boolean {
+  return ALLOWED_TRANSITIONS[from].includes(to);
+}
+
 export class BridgeManager {
   private logger = pino();
   private stellarServer: StellarSdk.SorobanRpc.Server;
@@ -187,6 +205,7 @@ export class BridgeManager {
     if (!transfer) {
       throw new Error(`Transfer not found: ${transferId}`);
     }
+    this.assertTransition(transfer, "confirming");
 
     this.logger.info(
       { transferId, sourceChainTxHash },
@@ -214,7 +233,7 @@ export class BridgeManager {
       const bridgeTxHash = axelarResponse.data.transactionHash;
 
       // Update transfer status
-      transfer.status = "confirming";
+      this.setStatus(transfer, "confirming");
       transfer.sourceChainTxHash = sourceChainTxHash;
       transfer.bridgeTxHash = bridgeTxHash;
       transfer.updatedAt = Date.now();
@@ -227,7 +246,7 @@ export class BridgeManager {
       return bridgeTxHash;
     } catch (error) {
       this.logger.error({ error, transferId }, "Axelar transfer failed");
-      transfer.status = "failed";
+      this.setStatus(transfer, "failed");
       transfer.errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       transfer.updatedAt = Date.now();
@@ -244,7 +263,8 @@ export class BridgeManager {
       throw new Error(`Transfer not found: ${transferId}`);
     }
 
-    if (!transfer.bridgeTxHash) {
+    // Only in-flight transfers have a remote status worth polling.
+    if (transfer.status !== "confirming" || !transfer.bridgeTxHash) {
       return transfer.status;
     }
 
@@ -257,13 +277,11 @@ export class BridgeManager {
 
       // Map Axelar status to our status
       if (axelarStatus === "executed") {
-        transfer.status = "confirmed";
+        this.setStatus(transfer, "confirmed");
         transfer.destinationTxHash = response.data.destinationTxHash;
       } else if (axelarStatus === "failed") {
-        transfer.status = "failed";
+        this.setStatus(transfer, "failed");
       }
-
-      transfer.updatedAt = Date.now();
 
       return transfer.status;
     } catch (error) {
@@ -284,6 +302,7 @@ export class BridgeManager {
       throw new Error(`Transfer not found: ${transferId}`);
     }
 
+    this.assertTransition(transfer, "pending");
     if (transfer.retriesRemaining <= 0) {
       throw new Error(`No retries remaining for transfer ${transferId}`);
     }
@@ -294,9 +313,8 @@ export class BridgeManager {
     );
 
     transfer.retriesRemaining -= 1;
-    transfer.status = "pending";
     transfer.lastRetryTime = Date.now();
-    transfer.updatedAt = Date.now();
+    this.setStatus(transfer, "pending");
   }
 
   /**
@@ -308,12 +326,11 @@ export class BridgeManager {
       throw new Error(`Transfer not found: ${transferId}`);
     }
 
-    if (transfer.status === "confirmed" || transfer.status === "failed") {
+    if (!canTransition(transfer.status, "cancelled")) {
       throw new Error(`Cannot cancel transfer in status: ${transfer.status}`);
     }
 
-    transfer.status = "cancelled";
-    transfer.updatedAt = Date.now();
+    this.setStatus(transfer, "cancelled");
 
     this.logger.info({ transferId }, "Transfer cancelled");
   }
@@ -340,6 +357,23 @@ export class BridgeManager {
       this.logger.error({ error }, "Failed to verify signature");
       return false;
     }
+  }
+
+  private assertTransition(
+    transfer: StoredBridgeTransfer,
+    to: BridgeStatus,
+  ): void {
+    if (!canTransition(transfer.status, to)) {
+      throw new Error(
+        `Invalid transfer status transition: ${transfer.status} -> ${to}`,
+      );
+    }
+  }
+
+  private setStatus(transfer: StoredBridgeTransfer, to: BridgeStatus): void {
+    this.assertTransition(transfer, to);
+    transfer.status = to;
+    transfer.updatedAt = Date.now();
   }
 
   /**

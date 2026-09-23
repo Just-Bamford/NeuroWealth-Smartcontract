@@ -26,6 +26,24 @@ target/
 .env.testnet
 .env.mainnet
 .env.*.local
+# Any other env variant (.env.production, .env.staging, ...) — templates only (#766)
+.env.*
+!.env.*.template
+!.env.example
+!.env.*.example
+!.env.sample
+
+# Private-key material (#766) — enforced by scripts/check-env-templates.py
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
 __pycache__/
 *.py[cod]
 

@@ -1,4 +1,6 @@
-import { YieldComparisonEngine, ProtocolYieldData } from './yieldComparison';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
+import { YieldComparisonEngine, ProtocolYieldData, evaluateYield } from './yieldComparison';
 
 describe('YieldComparisonEngine', () => {
   let engine: YieldComparisonEngine;
@@ -34,12 +36,33 @@ describe('YieldComparisonEngine', () => {
 
   it('ranks opportunities by risk-adjusted return', () => {
     const ranked = engine.rankOpportunities(mockProtocols);
-    expect(ranked.length).toBe(2);
-    expect(ranked[0].riskAdjustedScore).toBeGreaterThan(0);
+    assert.strictEqual(ranked.length, 2);
+    assert.ok(ranked[0].riskAdjustedScore > 0);
   });
 
   it('enforces 0.5% minimum improvement rebalance threshold', () => {
-    expect(engine.shouldRebalance(0.080, 0.086)).toBe(true);  // +0.6% > 0.5%
-    expect(engine.shouldRebalance(0.080, 0.083)).toBe(false); // +0.3% < 0.5%
+    assert.strictEqual(engine.shouldRebalance(0.080, 0.086), true);  // +0.6% > 0.5%
+    assert.strictEqual(engine.shouldRebalance(0.080, 0.083), false); // +0.3% < 0.5%
+  });
+});
+
+describe('evaluateYield (#467)', () => {
+  it('moves balanced funds to the higher-yielding DEX', async () => {
+    assert.deepStrictEqual(await evaluateYield('balanced', 'blend', 6.5), {
+      shouldRebalance: true,
+      targetProtocol: 'dex',
+    });
+  });
+
+  it('keeps conservative strategies on Blend', async () => {
+    assert.deepStrictEqual(await evaluateYield('conservative', 'none', 0), {
+      shouldRebalance: true,
+      targetProtocol: 'blend',
+    });
+    assert.strictEqual((await evaluateYield('conservative', 'blend', 6.5)).shouldRebalance, false);
+  });
+
+  it('does not rebalance below the 0.5pp improvement threshold', async () => {
+    assert.strictEqual((await evaluateYield('growth', 'blend', 7.8)).shouldRebalance, false);
   });
 });

@@ -1,3 +1,5 @@
+import type { RebalanceDecision } from './userStrategies';
+
 export interface ProtocolYieldData {
   protocolId: string;
   name: string;
@@ -53,5 +55,54 @@ export class YieldComparisonEngine {
 
   public shouldRebalance(currentApy: number, targetApy: number): boolean {
     return targetApy - currentApy >= this.minImprovementThreshold;
+  }
+}
+
+/** Minimum APY improvement, in percentage points, before a rebalance is proposed. */
+export const MIN_REBALANCE_IMPROVEMENT_PCT = 0.5;
+
+export async function fetchBlendApy(): Promise<number> {
+  // TODO: Implement on-chain query to Blend protocol
+  return 6.5;
+}
+
+export async function fetchDexApy(): Promise<number> {
+  // TODO: Implement query to DEX liquidity pools
+  return 8.2;
+}
+
+/**
+ * Decide whether to move funds for a given strategy (#467).
+ *
+ * APYs are in percent (e.g. 6.5), matching `rebalances.apy_after`.
+ * Conservative strategies stay on Blend lending; balanced/growth may use the
+ * DEX when it pays more. A rebalance is proposed only when the target
+ * protocol differs and improves APY by more than 0.5 percentage points.
+ * Fetch failures never trigger a rebalance.
+ *
+ * Restored after the class refactor dropped it while `index.ts` and
+ * `eventListener.ts` still called it.
+ */
+export async function evaluateYield(
+  strategy: string,
+  currentProtocol: string,
+  currentApy: number,
+): Promise<RebalanceDecision> {
+  try {
+    const [blendApy, dexApy] = await Promise.all([fetchBlendApy(), fetchDexApy()]);
+
+    let targetProtocol = 'blend';
+    let targetApy = blendApy;
+    if (strategy !== 'conservative' && dexApy > blendApy) {
+      targetProtocol = 'dex';
+      targetApy = dexApy;
+    }
+
+    if (targetProtocol !== currentProtocol && targetApy - currentApy > MIN_REBALANCE_IMPROVEMENT_PCT) {
+      return { shouldRebalance: true, targetProtocol };
+    }
+    return { shouldRebalance: false };
+  } catch {
+    return { shouldRebalance: false };
   }
 }
