@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from '@/components/Header';
 import { BalanceCard } from '@/components/BalanceCard';
 import { EarningsCard } from '@/components/EarningsCard';
@@ -8,7 +8,7 @@ import { StrategyBadge } from '@/components/StrategyBadge';
 import { PortfolioChart } from '@/components/PortfolioChart';
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { ActionModal } from '@/components/ActionModal';
-import { MessageSquare, Bot, ArrowRight, ShieldCheck, Zap, Layers } from 'lucide-react';
+import { MessageSquare, Bot, ArrowRight, ShieldCheck, Zap, Layers, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { connectFreighterWallet } from '@/lib/freighter';
 import { fetchVaultState, VaultState } from '@/lib/stellar';
@@ -33,8 +33,9 @@ export default function DashboardPage() {
   const [earnings, setEarnings] = useState<EarningsSummary>({ today: 0, week: 0, month: 0 });
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [modalType, setModalType] = useState<'deposit' | 'withdraw'>('deposit');
 
@@ -47,31 +48,46 @@ export default function DashboardPage() {
 
   const handleDisconnect = () => {
     setPublicKey(null);
+    setError(null);
   };
 
-  useEffect(() => {
-    async function loadData() {
-      if (publicKey) {
-        const state = await fetchVaultState(publicKey);
-        setVaultState(state);
+  const loadData = useCallback(async () => {
+    if (!publicKey) return;
 
-        const earnData = await getEarningsSummary(publicKey);
-        setEarnings(earnData);
+    setLoading(true);
+    setError(null);
 
-        const chart = await getPortfolioValueHistory(publicKey);
-        setChartData(chart);
+    try {
+      const [state, earnData, chart, txs] = await Promise.all([
+        fetchVaultState(publicKey),
+        getEarningsSummary(publicKey),
+        getPortfolioValueHistory(publicKey),
+        getRecentTransactions(publicKey),
+      ]);
 
-        const txs = await getRecentTransactions(publicKey);
-        setTransactions(txs);
-      } else {
-        setVaultState({ balance: 0, strategy: 'Balanced', exchangeRate: 1.042, apy: 8.4 });
-        setEarnings({ today: 0, week: 0, month: 0 });
-        setChartData([]);
-        setTransactions([]);
-      }
+      setVaultState(state);
+      setEarnings(earnData);
+      setChartData(chart);
+      setTransactions(txs);
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+      setError('Failed to load dashboard data. Please try again.');
+    } finally {
+      setLoading(false);
     }
-    loadData();
   }, [publicKey]);
+
+  useEffect(() => {
+    if (publicKey) {
+      loadData();
+    } else {
+      setVaultState({ balance: 0, strategy: 'Balanced', exchangeRate: 1.042, apy: 8.4 });
+      setEarnings({ today: 0, week: 0, month: 0 });
+      setChartData([]);
+      setTransactions([]);
+      setError(null);
+    }
+  }, [publicKey, loadData]);
 
   const openModal = (type: 'deposit' | 'withdraw') => {
     setModalType(type);
@@ -84,7 +100,6 @@ export default function DashboardPage() {
         <Header publicKey={publicKey} onConnect={handleConnect} onDisconnect={handleDisconnect} />
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-          {/* Hero Banner / Wallet Banner */}
           {!publicKey && (
             <div className="glass-panel rounded-3xl p-8 relative overflow-hidden border border-emerald-500/20 bg-gradient-to-r from-emerald-950/30 via-slate-900/60 to-indigo-950/30 shadow-glow-emerald">
               <div className="max-w-2xl relative z-10">
@@ -108,42 +123,72 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Top 3 Cards Grid */}
+          {error && (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
+              <AlertTriangle size={18} />
+              <span className="text-sm flex-1">{error}</span>
+              <button
+                onClick={loadData}
+                className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 transition-colors"
+              >
+                <RefreshCw size={12} />
+                Retry
+              </button>
+            </div>
+          )}
+
           <section id="dashboard" className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <BalanceCard
-              balance={vaultState.balance}
-              usdEquivalent={vaultState.balance * 1.0}
-              exchangeRate={vaultState.exchangeRate}
-              onOpenDeposit={() => openModal('deposit')}
-              onOpenWithdraw={() => openModal('withdraw')}
-              isConnected={!!publicKey}
-            />
-
-            <EarningsCard earnings={earnings} isConnected={!!publicKey} />
-
-            <StrategyBadge
-              strategy={vaultState.strategy}
-              apy={vaultState.apy}
-              onSelectStrategy={(newSt) => setVaultState((prev) => ({ ...prev, strategy: newSt }))}
-            />
+            {loading ? (
+              <>
+                <SkeletonCard />
+                <SkeletonCard />
+                <SkeletonCard />
+              </>
+            ) : (
+              <>
+                <BalanceCard
+                  balance={vaultState.balance}
+                  usdEquivalent={vaultState.balance * 1.0}
+                  exchangeRate={vaultState.exchangeRate}
+                  onOpenDeposit={() => openModal('deposit')}
+                  onOpenWithdraw={() => openModal('withdraw')}
+                  isConnected={!!publicKey}
+                />
+                <EarningsCard earnings={earnings} isConnected={!!publicKey} />
+                <StrategyBadge
+                  strategy={vaultState.strategy}
+                  apy={vaultState.apy}
+                  onSelectStrategy={(newSt) => setVaultState((prev) => ({ ...prev, strategy: newSt }))}
+                />
+              </>
+            )}
           </section>
 
-          {/* Portfolio Chart Section */}
           <section id="strategies">
-            <PortfolioChart data={chartData.length > 0 ? chartData : [
-              { date: 'Jul 21', value: 1000, yield: 0 },
-              { date: 'Jul 24', value: 1200, yield: 15 },
-              { date: 'Jul 28', value: 1450, yield: 45 }
-            ]} />
+            {loading ? (
+              <div className="glass-panel rounded-2xl p-6 h-64 flex items-center justify-center">
+                <Loader2 className="animate-spin text-emerald-400" size={24} />
+              </div>
+            ) : (
+              <PortfolioChart data={chartData.length > 0 ? chartData : [
+                { date: 'Jul 21', value: 1000, yield: 0 },
+                { date: 'Jul 24', value: 1200, yield: 15 },
+                { date: 'Jul 28', value: 1450, yield: 45 }
+              ]} />
+            )}
           </section>
 
-          {/* Transaction History & WhatsApp Banner */}
           <section id="history" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <TransactionHistory transactions={transactions} />
+              {loading ? (
+                <div className="glass-panel rounded-2xl p-6 h-48 flex items-center justify-center">
+                  <Loader2 className="animate-spin text-emerald-400" size={24} />
+                </div>
+              ) : (
+                <TransactionHistory transactions={transactions} />
+              )}
             </div>
 
-            {/* WhatsApp Integration Callout Card */}
             <div id="whatsapp" className="glass-panel-interactive rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between border border-emerald-500/20">
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -154,20 +199,17 @@ export default function DashboardPage() {
                     Live Bot
                   </span>
                 </div>
-
                 <h3 className="text-lg font-bold text-white mb-2">
                   Interact via WhatsApp Chat
                 </h3>
                 <p className="text-xs text-slate-300 leading-relaxed mb-4">
                   No browser or wallet needed! Simply text our Twilio bot to verify with OTP, check balance, deposit, or withdraw on the go.
                 </p>
-
                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-xs text-emerald-400 space-y-1 mb-4">
                   <div>User: deposit 100 USDC</div>
                   <div className="text-slate-300">Agent: Got it! Deposited 100 USDC into Balanced strategy. ✅</div>
                 </div>
               </div>
-
               <div className="pt-4 border-t border-slate-800">
                 <span className="text-xs text-slate-400 block mb-2">Webhook URL:</span>
                 <code className="text-[11px] bg-slate-900 px-2 py-1 rounded border border-slate-800 text-slate-300 block truncate">
@@ -179,7 +221,6 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* Action Modal */}
       <ActionModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -189,7 +230,6 @@ export default function DashboardPage() {
         exchangeRate={vaultState.exchangeRate}
       />
 
-      {/* Footer */}
       <footer className="border-t border-slate-800/80 bg-[#06080e] py-6 mt-12 text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -204,6 +244,16 @@ export default function DashboardPage() {
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="glass-panel rounded-2xl p-6 animate-pulse space-y-4">
+      <div className="h-4 bg-slate-700/50 rounded w-1/3" />
+      <div className="h-8 bg-slate-700/50 rounded w-1/2" />
+      <div className="h-3 bg-slate-700/50 rounded w-2/3" />
     </div>
   );
 }
