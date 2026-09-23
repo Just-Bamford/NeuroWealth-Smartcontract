@@ -9,7 +9,8 @@ The NeuroWealth agent is an autonomous background service that continuously moni
 - **Yield Comparison Engine** (`src/yieldComparison.ts`): Aggregates real-time and historical (7d/30d/90d) APYs, calculating risk-adjusted return ratios (Sharpe-like metric) and enforcing the 0.5% minimum improvement threshold.
 - **Risk Scoring Engine** (`src/riskScoring.ts`): Multi-dimensional risk evaluation (smart contract, liquidity, oracle, governance, centralization risks) to determine protocol eligibility and risk thresholds.
 - **Intent Parser** (`src/intentParser.ts`): Natural language parsing for WhatsApp & chat commands.
-- **Event Listener** (`src/eventListener.ts`): Real-time contract event ingestion.
+- **Event Listener** (`src/eventListener.ts`): Real-time contract event ingestion. Decodes the real deposit/withdraw `amount` for the alert engine (`src/vaultEventPayload.ts`) and persists its RPC paging cursor (`src/ledgerCursor.ts`) so restarts resume without missing events.
+- **User Strategies** (`src/userStrategies.ts`): reads each user's `strategy_preference` and the vault's current allocation (latest `rebalances` row) from Postgres for the hourly rebalance loop and deposit handling.
 - **Protocol Adapters** (`src/protocolAdapters.ts`): Uniform venue adapters (`supply`, `withdraw`, `get_apy`, `get_balance`) with a registry enforcing the owner-managed protocol whitelist and the risk-scoring gate (#656). Phase 2 venues: Phoenix orderbook DEX, Aquarius AMM — see `docs/PROTOCOL_ADAPTER_INTERFACE.md`.
 - **Rebalancing Scheduler** (`src/scheduler.ts`): time-based and event-driven rebalancing with gas awareness (#651, below).
 - **Metrics & Dashboard API** (`src/metrics.ts`, `src/metricsApi.ts`): performance-metrics aggregation + HTTP endpoints for the dashboard UI (#652).
@@ -98,3 +99,15 @@ itself when the primary heartbeat (15 s interval, 60 s TTL) goes stale,
 restores the latest backup, and resumes — worst case < 90 s, well within the
 5-minute RTO. Runbooks for every failure scenario:
 [`docs/DISASTER_RECOVERY.md`](../docs/DISASTER_RECOVERY.md).
+
+## Event cursor persistence (#747)
+
+After every processed event, the event listener saves its Soroban RPC paging
+token to `agent_state` under key `agent:ledger_cursor`. When `DATABASE_URL` is
+unset, it saves to a JSON file instead (`LEDGER_CURSOR_FILE`, default
+`.agent-state/ledger-cursor.json`). On startup it resumes from that token, and
+it only starts at the latest ledger when no cursor exists. If the saved cursor
+cannot be read, the listener does not start, so it never skips ahead silently.
+If the agent was down for longer than the RPC retention window, the listener
+logs an error saying that events were missed and resumes from the latest
+ledger. Those events must then be backfilled manually.

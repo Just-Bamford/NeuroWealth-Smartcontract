@@ -2,6 +2,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import { handleWhatsAppWebhook } from './webhook';
+import { verifyTwilioSignature } from './twilioSignature';
 
 dotenv.config();
 
@@ -17,7 +18,8 @@ app.get('/health', (req, res) => {
 });
 
 // WhatsApp Twilio Webhook route
-app.post('/api/whatsapp/webhook', handleWhatsAppWebhook);
+// Only requests signed by Twilio (X-Twilio-Signature) reach the handler.
+app.post('/api/whatsapp/webhook', verifyTwilioSignature(), handleWhatsAppWebhook);
 
 app.listen(PORT, () => {
   console.log(`🚀 NeuroWealth WhatsApp Bot Handler running on port ${PORT}`);
