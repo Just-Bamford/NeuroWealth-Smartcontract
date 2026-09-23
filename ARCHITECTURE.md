@@ -44,6 +44,25 @@ Instance storage is used for contract-wide configuration that is read frequently
 | | `PendingUpgradeHash` | BytesN<32> | WASM hash awaiting timelock execution (Issue #316) |
 | | `UpgradeTimelockExpiry` | u32 | Ledger at which the pending upgrade becomes executable (Issue #316) |
 | | `Version` | u32 | Contract version for upgrade tracking |
+| | `Deployer` | Address | Deployer address used to authenticate `initialize` |
+| | `BlendApprovalTtl` | u32 | Legacy Blend approval TTL; read only as a fallback when `ApprovalTtl` is unset |
+| | `MaxConsecutiveFailures` | u32 | Circuit-breaker threshold of consecutive failed rebalances (Issue #439) |
+| | `ConsecutiveFailures` | u32 | Running count of consecutive failed rebalances (Issue #439) |
+| | `UserSharesIndex` | Vec<Address> | Append-only index of addresses that have held shares (Issue #440) |
+| | `MigrationTarget` | Address | Target vault for share migration (Issue #637) |
+| | `MigrationPaused` | bool | Independent pause state for migration (Issue #637) |
+| | `CumulativeMevLoss` | i128 | Cumulative suspected MEV loss (Issue #658) |
+| | `MevIncidentCount` | u32 | Number of rebalances with suspected MEV (Issue #658) |
+| | `MaxAcceptableMevLoss` | i128 | Per-rebalance MEV alert threshold; 0 = unset (Issue #658) |
+| | `MinHoldingPeriod` | u32 | Ledgers a user must wait after depositing before withdrawing (Issue #659) |
+| | `RateLimitConfig(Symbol)` | RateLimitConfig | Per-category rate-limit policy (see [On-chain rate limiting](#on-chain-rate-limiting)) |
+| | `RateLimitGlobalState(Symbol)` | RateLimitState | Global per-category window usage |
+| | `RateLimitUserState(Address, Symbol)` | RateLimitState | Per-user per-category window usage (instance on purpose, must not expire) |
+| | `MaxBatchSize` | u32 | Maximum `batch_deposit` entries; 0 = unlimited |
+| | `ProtocolAdapter(Symbol)` | Address | Adapter contract per protocol (Issue #656; reserved, not yet read/written) |
+| | `ProtocolWhitelist(Symbol)` | bool | Protocol whitelist flag (Issue #656; reserved, not yet read/written) |
+| | `ProtocolWhitelistIndex` | Vec<Symbol> | Enumerable list of whitelisted protocols (Issue #656; reserved, not yet read/written) |
+| | `StandbyAgent` | Address | Hot-standby agent key accepted by `require_is_agent` (Issue #653) |
 
 ### Persistent Storage
 
@@ -54,6 +73,11 @@ Persistent storage is used for per-user data that requires efficient access.
 | | `Balance(Address)` | i128 | Deprecated. Retained only to preserve the serialized `DataKey` layout across upgrades; no longer read or written |
 | | `Shares(Address)` | i128 | User's share balance (proportional ownership) |
 | | `UserStrategy(Address)` | Symbol | Per-user strategy preference ("conservative", "balanced", "growth") |
+| | `LockedShares(Address)` | i128 | Shares locked for boosted APY (Issue #636) |
+| | `LockExpiry(Address)` | u32 | Ledger when the user's locked shares unlock (Issue #636) |
+| | `LastDepositLedger(Address)` | u32 | Ledger of the user's most recent deposit (Issue #659) |
+| | `DepositSnapshot(Address)` | DepositSnapshot | First-deposit snapshot for realized-APY computation (Issue #462) |
+| | `ApyPrediction(Symbol)` | ApyPrediction | Latest ML APY prediction per protocol (Issue #650) |
 
 ### Storage Key Diagram: Instance vs Persistent
 
@@ -182,8 +206,48 @@ pub enum DataKey {
     PendingUpgradeHash,   // WASM hash awaiting timelock execution (#316)
     UpgradeTimelockExpiry,// ledger the pending upgrade unlocks at (#316)
     Deployer,             // deployer address (init only)
+    BlendApprovalTtl,     // legacy Blend approval TTL (fallback for ApprovalTtl)
+    MaxConsecutiveFailures, // circuit-breaker trip threshold (#439)
+    ConsecutiveFailures,  // running count of failed rebalances (#439)
+    UserSharesIndex,      // append-only Vec<Address> of share holders (#440)
+    MigrationTarget,      // target vault for share migration (#637)
+    MigrationPaused,      // migration-only pause flag (#637)
+    LockedShares(Address),// user -> shares locked for boosted APY (#636)
+    ApyPrediction(Symbol),// protocol -> latest ML APY prediction (#650)
+    CumulativeMevLoss,    // total suspected MEV loss (#658)
+    MevIncidentCount,     // number of suspected MEV incidents (#658)
+    MaxAcceptableMevLoss, // per-rebalance MEV alert threshold (#658)
+    LockExpiry(Address),  // user -> ledger when locked shares unlock (#636)
+    MinHoldingPeriod,     // flash-loan protection window in ledgers (#659)
+    LastDepositLedger(Address), // user -> ledger of last deposit (#659)
+    RateLimitConfig(Symbol),    // category -> rate-limit policy
+    RateLimitGlobalState(Symbol), // category -> global window usage
+    RateLimitUserState(Address, Symbol), // (user, category) -> window usage
+    MaxBatchSize,         // batch_deposit entry ceiling (0 = unlimited)
+    DepositSnapshot(Address), // user -> first-deposit snapshot (#462)
+    ProtocolAdapter(Symbol),  // protocol -> adapter contract address (#656)
+    ProtocolWhitelist(Symbol),// protocol -> whitelist flag (#656)
+    ProtocolWhitelistIndex,   // Vec<Symbol> of whitelisted protocols (#656)
+    StandbyAgent,         // hot-standby agent key (#653)
 }
 ```
+
+> **Keep this block in sync with `lib.rs`.** CI runs
+> `bash scripts/check-data-key-docs.sh`, which fails if any `DataKey` variant in
+> `neurowealth-vault/contracts/vault/src/lib.rs` is missing from the block above.
+> New variants must be **appended** to the enum (never inserted) to preserve the
+> serialized discriminants of existing keys across upgrades.
+
+### Withdrawal queue storage keys
+
+The withdrawal queue (`queue_withdrawal`, `set_queue_config`,
+`process_withdrawal_queue`, exercised by `tests/test_withdrawal_queue.rs`) does
+**not** yet have any `DataKey` variants: those entrypoints are not present in
+`lib.rs`, so no queue state is persisted on-chain today. When the queue lands,
+its keys (e.g. queue config, next request id, per-request entries, FIFO head)
+must be appended to `DataKey`, added to the block above and to the
+instance/persistent tables in [Storage Layout](#storage-layout), and
+`scripts/check-data-key-docs.sh` must pass before merge.
 
 ## Share Accounting Model
 

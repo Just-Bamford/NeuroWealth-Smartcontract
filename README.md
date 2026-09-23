@@ -155,7 +155,8 @@ directories once development begins:
 | Component | Directory | Status |
 |-----------|-----------|--------|
 | AI agent backend (Node.js / Python) | `agent/` | Planned |
-| Next.js web frontend | `frontend/` | Completed (#471, #472) |
+| Next.js web frontend (canonical UI) | `frontend/` | Completed (#471, #472) |
+| Shared UI component library | `packages/vault-ui` | Library only, see [docs/FRONTEND_PACKAGES.md](docs/FRONTEND_PACKAGES.md) (#768) |
 | WhatsApp bot handler | `whatsapp/` | Completed (#469) |
 | PostgreSQL / Supabase schema | `db/` / `supabase/` | Completed (#470) |
 
@@ -230,6 +231,8 @@ See [`scripts/README-E2E.md`](scripts/README-E2E.md) for end-to-end devnet valid
 | [`docs/ERC4626_CONFORMANCE_CHECKLIST.md`](docs/ERC4626_CONFORMANCE_CHECKLIST.md) | ERC-4626 conformance checklist: function-by-function diff against the spec (Issue #602) |
 | [`docs/ISSUER_FREEZE_CONTINGENCY.md`](docs/ISSUER_FREEZE_CONTINGENCY.md) | Operational plan if the vault's USDC or agent wallet is frozen by the issuer (Issue #604) |
 | [`docs/SECRETS_HYGIENE.md`](docs/SECRETS_HYGIENE.md) | Full-history secret scan results and pre-commit/CI enforcement (Issue #605) |
+| [`docs/WHATSAPP_BOT.md`](docs/WHATSAPP_BOT.md) | WhatsApp bot architecture, env requirements, intent validation, and known gaps (Issues #767, #771) |
+| [`docs/FRONTEND_PACKAGES.md`](docs/FRONTEND_PACKAGES.md) | Canonical UI decision: `frontend/` app vs `packages/vault-ui` library, and dedup plan (Issue #768) |
 
 
 ## Smart Contract
@@ -434,6 +437,8 @@ NeuroWealth is designed to be fully operable through WhatsApp, making it accessi
 3. OTP verified → agent creates a Stellar keypair for this user (custodial)
 4. User can now deposit, withdraw, and check balance entirely through chat
 5. Funds are secured in the Soroban vault contract under their wallet address
+
+See [`docs/WHATSAPP_BOT.md`](docs/WHATSAPP_BOT.md) for the bot's module layout, required environment variables, and security gaps.
 
 ### Setting Up the Webhook
 bash# Your webhook endpoint receives WhatsApp messages
