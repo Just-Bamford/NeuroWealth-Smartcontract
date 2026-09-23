@@ -1,4 +1,4 @@
-//! Pure share-accounting arithmetic used by the NeuroWealth vault.
+//! Pure share-accounting arithmetic used by the `NeuroWealth` vault.
 //!
 //! These helpers are the *exact* integer formulas implemented by
 //! `NeuroWealthVault::convert_to_shares_internal`,
@@ -171,6 +171,8 @@ impl VaultModel {
         Some(next)
     }
 }
+
+pub mod queue;
 
 #[cfg(kani)]
 mod proofs;

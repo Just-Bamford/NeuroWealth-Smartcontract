@@ -62,6 +62,30 @@ This directory contains fuzz testing harnesses for the NeuroWealth Vault contrac
 2. `TotalAssets` does not decrease after a `harvest()` call (yield can only be non-negative)
 3. No unexpected panics from any harvest code path
 
+### 7. `withdrawal_queue_invariants` (Issue #777)
+**Location**: `share-math/fuzz/` — a standalone cargo-fuzz project over the pure
+`share-math` crate (`share_math::queue::QueueModel`), so it builds without the
+Soroban contract crate.
+**Purpose**: Fuzzes share accounting for a FIFO withdrawal queue: shares are
+ceil-escrowed on `queue_withdrawal`, returned on cancel, and burned/refunded on
+`process_withdrawal_queue` at the fulfilment-time exchange rate.
+**Input format**: first byte selects `max_size` (1–8); then 4-byte chunks:
+- Byte 0: Operation (0=deposit, 1=queue, 2=cancel, 3=process, 4=yield, 5=loss, 6=recall liquidity)
+- Byte 1: User / request-id / process-limit selector
+- Bytes 2-3: Amount selector (u16 LE)
+**Invariants checked**:
+1. `total_shares == sum(free_shares + escrowed_shares)`
+2. Per-user escrow equals the shares locked by that user's pending requests
+3. No negative balances; `0 <= idle_assets <= total_assets`
+4. Pending requests never exceed `max_size`
+5. Strict FIFO — no pending request older than a fulfilled one
+6. Payout never exceeds requested assets; assets leaving the vault equal assets paid
+7. Fulfilment never lowers the exchange rate for remaining holders
+8. Cancel restores the exact escrow, is owner-only, and cannot repeat; terminal requests are immutable
+
+Run: `cargo +nightly fuzz run --fuzz-dir share-math/fuzz withdrawal_queue_invariants`.
+The same harness runs on stable via `cargo test -p share-math queue`.
+
 ## Running Fuzz Tests
 
 ```bash

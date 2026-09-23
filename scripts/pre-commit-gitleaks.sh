@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit secret scan (#605).
+# Pre-commit secret scan (#605, #766).
 #
 # Blocks commits that stage Stellar secret seeds (S...), .env contents, or
 # anything else matched by .gitleaks.toml (which extends the gitleaks
@@ -14,6 +14,12 @@
 
 set -euo pipefail
 
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Env templates / key files policy (#766): blocks real .env files, private-key
+# files, and non-placeholder secrets in *.template / *.example files.
+python3 "$ROOT/scripts/check-env-templates.py" --staged
+
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "pre-commit: gitleaks is not installed — refusing to skip the secret scan." >&2
   echo "Install it (e.g. 'brew install gitleaks') or commit with --no-verify ONLY if you are certain no secrets are staged." >&2
@@ -21,4 +27,4 @@ if ! command -v gitleaks >/dev/null 2>&1; then
 fi
 
 exec gitleaks git --pre-commit --staged --redact \
-  --config "$(git rev-parse --show-toplevel)/.gitleaks.toml"
+  --config "$ROOT/.gitleaks.toml"

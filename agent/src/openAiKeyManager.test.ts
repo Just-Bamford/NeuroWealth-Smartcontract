@@ -12,7 +12,7 @@ describe('OpenAIKeyManager (#712)', () => {
     // Call 3 times
     for (let i = 0; i < 3; i++) {
       await manager.executeWithRotation(async (client) => {
-        executedKeys.push(client.apiKey);
+        executedKeys.push(client.apiKey ?? '');
         return 'ok';
       });
     }

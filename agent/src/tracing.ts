@@ -4,7 +4,7 @@
  */
 
 import { trace } from '@opentelemetry/api';
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { Resource } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
 import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
@@ -27,7 +27,7 @@ export function initializeTracing(serviceName: string = 'neurowealth-agent') {
     endpoint: process.env.JAEGER_ENDPOINT || 'http://localhost:4318/v1/traces',
   });
 
-  provider.addSpanProcessor(jaegerExporter);
+  provider.addSpanProcessor(new BatchSpanProcessor(jaegerExporter));
   provider.register();
 
   // Register instrumentations

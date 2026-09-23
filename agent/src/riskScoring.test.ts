@@ -1,3 +1,5 @@
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
 import { ProtocolRiskScoringEngine, RiskDimensionScores } from './riskScoring';
 
 describe('ProtocolRiskScoringEngine', () => {
@@ -17,8 +19,8 @@ describe('ProtocolRiskScoringEngine', () => {
     };
     // 20*0.30 + 30*0.25 + 25*0.20 + 40*0.15 + 20*0.10 = 6 + 7.5 + 5 + 6 + 2 = 26.5
     const composite = engine.calculateCompositeRisk(scores);
-    expect(composite).toBe(26.5);
-    expect(engine.getRiskCategory(composite)).toBe('LOW');
+    assert.strictEqual(composite, 26.5);
+    assert.strictEqual(engine.getRiskCategory(composite), 'LOW');
   });
 
   it('identifies critical risk and triggers rebalance alerts', () => {
@@ -30,8 +32,8 @@ describe('ProtocolRiskScoringEngine', () => {
       centralizationRisk: 80,
     };
     const composite = engine.calculateCompositeRisk(highRiskScores);
-    expect(composite).toBeGreaterThan(80);
-    expect(engine.getRiskCategory(composite)).toBe('CRITICAL');
-    expect(engine.shouldTriggerRebalanceAlert(composite)).toBe(true);
+    assert.ok(composite > 80);
+    assert.strictEqual(engine.getRiskCategory(composite), 'CRITICAL');
+    assert.strictEqual(engine.shouldTriggerRebalanceAlert(composite), true);
   });
 });
