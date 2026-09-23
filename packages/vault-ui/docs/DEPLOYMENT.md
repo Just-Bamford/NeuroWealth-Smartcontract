@@ -1,5 +1,10 @@
 # PWA Deployment Guide
 
+> **Local/preview use only.** Production deploys the canonical app in
+> [`frontend/`](../../../frontend). `packages/vault-ui` is a component library,
+> see [docs/FRONTEND_PACKAGES.md](../../../docs/FRONTEND_PACKAGES.md). The steps
+> below apply to the Vite playground build.
+
 This document outlines the deployment requirements for the NeuroWealth Vault PWA application.
 
 ## Prerequisites

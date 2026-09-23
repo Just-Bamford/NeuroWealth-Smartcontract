@@ -1,5 +1,9 @@
 # NeuroWealth Frontend Dashboard
 
+> **Canonical web app.** This is the only deployable NeuroWealth UI. Reusable
+> components live in [`packages/vault-ui`](../packages/vault-ui) (a library, not
+> a second app). See [docs/FRONTEND_PACKAGES.md](../docs/FRONTEND_PACKAGES.md).
+
 Next.js 15 Web Application with Tailwind CSS, `@stellar/stellar-sdk`, `@stellar/freighter-api`, and Recharts portfolio analytics.
 
 ## Features
