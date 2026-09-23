@@ -5,6 +5,7 @@ import { getSession, updateState, checkRateLimit, UserState } from './stateManag
 import { generateOTP, verifyOTP } from './otpService';
 import { createCustodialWallet, getWallet } from './walletService';
 import { parseIntent } from './intentParser';
+import { validateIntent } from './contractLimits';
 import { getPortfolio, handleDeposit, handleWithdraw } from './vaultRouter';
 
 const MessagingResponse = twilio.twiml.MessagingResponse;
@@ -97,6 +98,15 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
         return;
       }
 
+      // Reject amounts and strategy names the vault contract would refuse
+      // before building any transaction.
+      const validation = validateIntent(intent);
+      if (!validation.ok) {
+        twiml.message(`⚠️ ${validation.error}`);
+        res.type('text/xml').send(twiml.toString());
+        return;
+      }
+
       switch (intent.type) {
         case 'GREETING': {
           twiml.message(
@@ -125,8 +135,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
         }
 
         case 'DEPOSIT': {
-          const amount = intent.amount || 100;
-          const result = await handleDeposit(phoneHash, amount, intent.strategy);
+          const result = await handleDeposit(phoneHash, intent.amount as number, intent.strategy);
           twiml.message(`🤖 ${result.message}`);
           break;
         }
