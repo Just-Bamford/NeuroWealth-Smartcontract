@@ -608,6 +608,19 @@ pub enum DataKey {
     /// `update_standby_agent` and perform an instant switchover via
     /// `switch_to_standby_agent`. Appended to preserve serialized layout.
     StandbyAgent,
+
+    // ============================================================================
+    // Withdrawal Queue (#757)
+    // ============================================================================
+
+    /// Withdrawal queue configuration: max_size and TTL in seconds.
+    QueueConfig,
+    /// Next withdrawal request ID (auto-incrementing counter).
+    NextRequestId,
+    /// A specific withdrawal request (key: request ID u32).
+    WithdrawalRequest(u32),
+    /// Ordered list of pending (non-fulfilled, non-cancelled) request IDs.
+    QueueOrder,
 }
 
 /// Owner-configured allowance for one rate-limit category.
@@ -635,6 +648,36 @@ pub struct RateLimitState {
     pub window_start: u32,
     /// Number of accepted calls in the current window.
     pub calls: u32,
+}
+
+// ============================================================================
+// WITHDRAWAL QUEUE (#757)
+// ============================================================================
+
+/// Owner-configured withdrawal queue settings.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueueConfig {
+    /// Maximum number of pending requests the queue can hold (0 = unlimited).
+    pub max_size: u32,
+    /// Request time-to-live in seconds; expired requests are skipped during processing.
+    pub ttl: u64,
+}
+
+/// A single withdrawal request in the queue.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WithdrawalRequest {
+    /// Address that submitted the request.
+    pub user: Address,
+    /// Amount of USDC (in base units) requested for withdrawal.
+    pub amount: i128,
+    /// Whether the request has been fulfilled by the agent.
+    pub fulfilled: bool,
+    /// Whether the user cancelled the request.
+    pub cancelled: bool,
+    /// Unix timestamp (seconds) when the request was created.
+    pub created_at: u64,
 }
 
 /// First-deposit snapshot used to compute a user's realized APY (#462).
@@ -1836,6 +1879,66 @@ pub struct RateLimitExceededEvent {
 }
 
 // ============================================================================
+// WITHDRAWAL QUEUE EVENTS (#757)
+// ============================================================================
+
+/// Emitted when a user queues a withdrawal request.
+///
+/// # Topics
+/// - `SymbolShort("wq_add")` (`TOPIC_WITHDRAWAL_QUEUED`) - Event identifier
+#[contracttype]
+pub struct WithdrawalQueuedEvent {
+    /// Auto-incrementing request ID.
+    pub request_id: u32,
+    /// User who queued the withdrawal.
+    pub user: Address,
+    /// Amount requested (base units).
+    pub amount: i128,
+    /// Unix timestamp of creation.
+    pub timestamp: u64,
+}
+
+/// Emitted when a user cancels a pending withdrawal request.
+///
+/// # Topics
+/// - `SymbolShort("wq_cancel")` (`TOPIC_WITHDRAWAL_CANCELLED`) - Event identifier
+#[contracttype]
+pub struct WithdrawalCancelledEvent {
+    /// The cancelled request ID.
+    pub request_id: u32,
+    /// User who cancelled.
+    pub user: Address,
+}
+
+/// Emitted when the agent fulfils a withdrawal request.
+///
+/// # Topics
+/// - `SymbolShort("wq_done")` (`TOPIC_WITHDRAWAL_FULFILLED`) - Event identifier
+#[contracttype]
+pub struct WithdrawalFulfilledEvent {
+    /// The fulfilled request ID.
+    pub request_id: u32,
+    /// User whose request was fulfilled.
+    pub user: Address,
+    /// Amount actually withdrawn (base units).
+    pub amount: i128,
+}
+
+/// Emitted when the owner updates the queue configuration.
+///
+/// # Topics
+/// - `SymbolShort("wq_cfg")` (`TOPIC_QUEUE_CONFIG_UPDATED`) - Event identifier
+#[contracttype]
+pub struct QueueConfigUpdatedEvent {
+    /// New max queue size.
+    pub new_max_size: u32,
+    /// New TTL in seconds.
+    pub new_ttl: u64,
+    /// Owner who made the change.
+    pub owner: Address,
+}
+
+// ============================================================================
 // BLEND POOL CLIENT INTERFACE
 // ============================================================================
 
@@ -1990,6 +2093,9 @@ use topics::{
     TOPIC_UNPAUSED, TOPIC_UPGRADED, TOPIC_UPGRADE_CANCELLED, TOPIC_UPGRADE_SCHEDULED,
     TOPIC_USER_CAP_UPDATED, TOPIC_USER_STRATEGY_UPDATED, TOPIC_WITHDRAW,
     TOPIC_MAX_FAILURES_UPDATED,
+
+    TOPIC_WITHDRAWAL_QUEUED, TOPIC_WITHDRAWAL_CANCELLED, TOPIC_WITHDRAWAL_FULFILLED,
+    TOPIC_QUEUE_CONFIG_UPDATED,
 
 };
 
@@ -8848,6 +8954,325 @@ impl NeuroWealthVault {
             .unwrap_or(symbol_short!("none"));
         let deployed = Self::get_protocol_balance(&env, &protocol);
         (idle, deployed)
+    }
+
+    // ==========================================================================
+    // WITHDRAWAL QUEUE (#757)
+    // ==========================================================================
+
+    /// Configures the withdrawal queue parameters. Only the owner may call this.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment.
+    /// * `max_size` - Maximum number of pending requests (0 = unlimited).
+    /// * `ttl` - Request time-to-live in seconds; expired requests are skipped.
+    ///
+    /// # Events
+    /// Emits `QueueConfigUpdatedEvent`.
+    pub fn set_queue_config(env: Env, max_size: u32, ttl: u64) {
+        Self::require_initialized(&env);
+        Self::require_is_owner(&env);
+
+        let config = QueueConfig { max_size, ttl };
+        env.storage()
+            .instance()
+            .set(&DataKey::QueueConfig, &config);
+
+        let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+        env.events().publish(
+            (TOPIC_QUEUE_CONFIG_UPDATED,),
+            QueueConfigUpdatedEvent {
+                new_max_size: max_size,
+                new_ttl: ttl,
+                owner,
+            },
+        );
+    }
+
+    /// Returns the current queue configuration.
+    ///
+    /// Defaults to `(0, 0)` (unlimited size, no TTL) when never configured.
+    pub fn get_queue_config(env: Env) -> (u32, u64) {
+        Self::require_initialized(&env);
+        let config: QueueConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::QueueConfig)
+            .unwrap_or(QueueConfig { max_size: 0, ttl: 0 });
+        (config.max_size, config.ttl)
+    }
+
+    /// Queues a withdrawal request for later processing by the agent.
+    ///
+    /// Returns the auto-incrementing request ID. The request is fulfilled
+    /// asynchronously when the agent calls `process_withdrawal_queue`.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment.
+    /// * `user` - Address of the user requesting withdrawal.
+    /// * `amount` - USDC amount in base units (7 decimals).
+    ///
+    /// # Panics
+    /// * If vault is paused.
+    /// * If user has insufficient shares.
+    /// * If queue is at capacity.
+    ///
+    /// # Events
+    /// Emits `WithdrawalQueuedEvent`.
+    pub fn queue_withdrawal(env: Env, user: Address, amount: i128) -> u32 {
+        Self::require_initialized(&env);
+        Self::require_not_paused(&env);
+        user.require_auth();
+
+        Self::require(&env, amount > 0, VaultError::InvalidAmount);
+
+        let user_shares: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Shares(user.clone()))
+            .unwrap_or(0);
+        let total_shares: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .unwrap_or(0);
+        let total_assets: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalAssets)
+            .unwrap_or(0);
+
+        // Ensure user has enough shares to cover the withdrawal
+        let shares_needed = if total_shares > 0 {
+            (amount as i128)
+                .checked_mul(total_shares)
+                .expect("vault: shares overflow")
+                / total_assets
+                + 1 // ceil division
+        } else {
+            amount
+        };
+
+        Self::require(
+            &env,
+            user_shares >= shares_needed,
+            VaultError::InsufficientBalance,
+        );
+
+        // Check queue capacity
+        let config: QueueConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::QueueConfig)
+            .unwrap_or(QueueConfig { max_size: 0, ttl: 0 });
+
+        if config.max_size > 0 {
+            let order: Vec<u32> = env
+                .storage()
+                .instance()
+                .get(&DataKey::QueueOrder)
+                .unwrap_or_else(|| Vec::new(&env));
+            Self::require(
+                &env,
+                (order.len() as u32) < config.max_size,
+                VaultError::BatchSizeExceeded,
+            );
+        }
+
+        // Assign request ID
+        let next_id: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextRequestId)
+            .unwrap_or(1u32);
+        let request_id = next_id;
+        env.storage()
+            .instance()
+            .set(&DataKey::NextRequestId, &(next_id + 1));
+
+        let timestamp = env.ledger().timestamp();
+        let request = WithdrawalRequest {
+            user: user.clone(),
+            amount,
+            fulfilled: false,
+            cancelled: false,
+            created_at: timestamp,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawalRequest(request_id), &request);
+
+        // Append to order queue
+        let mut order: Vec<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::QueueOrder)
+            .unwrap_or_else(|| Vec::new(&env));
+        order.push_back(request_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::QueueOrder, &order);
+
+        env.events().publish(
+            (TOPIC_WITHDRAWAL_QUEUED,),
+            WithdrawalQueuedEvent {
+                request_id,
+                user,
+                amount,
+                timestamp,
+            },
+        );
+
+        request_id
+    }
+
+    /// Returns the withdrawal request for the given ID, or panics if not found.
+    pub fn get_withdrawal_request(env: Env, request_id: u32) -> WithdrawalRequest {
+        Self::require_initialized(&env);
+        env.storage()
+            .instance()
+            .get(&DataKey::WithdrawalRequest(request_id))
+            .expect("withdrawal request not found")
+    }
+
+    /// Cancels a pending withdrawal request. Only the request creator may cancel.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment.
+    /// * `user` - Address of the user who created the request.
+    /// * `request_id` - ID of the request to cancel.
+    ///
+    /// # Panics
+    /// * If the request does not exist, is already fulfilled, or was cancelled.
+    /// * If the caller is not the request creator.
+    ///
+    /// # Events
+    /// Emits `WithdrawalCancelledEvent`.
+    pub fn cancel_withdrawal_request(env: Env, user: Address, request_id: u32) {
+        Self::require_initialized(&env);
+        user.require_auth();
+
+        let mut request: WithdrawalRequest = env
+            .storage()
+            .instance()
+            .get(&DataKey::WithdrawalRequest(request_id))
+            .expect("withdrawal request not found");
+
+        Self::require(&env, !request.fulfilled, VaultError::InvalidAmount);
+        Self::require(&env, !request.cancelled, VaultError::InvalidAmount);
+        Self::require(
+            &env,
+            request.user == user,
+            VaultError::UnauthorizedOwnerError,
+        );
+
+        request.cancelled = true;
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawalRequest(request_id), &request);
+
+        env.events().publish(
+            (TOPIC_WITHDRAWAL_CANCELLED,),
+            WithdrawalCancelledEvent {
+                request_id,
+                user,
+            },
+        );
+    }
+
+    /// Processes pending withdrawal requests in FIFO order. Only the agent may call.
+    ///
+    /// Skips cancelled and expired requests. Processes up to `batch_size` requests.
+    /// Returns the number of requests successfully fulfilled.
+    ///
+    /// # Arguments
+    /// * `env` - Soroban environment.
+    /// * `agent` - The AI agent address (must be authorized).
+    /// * `batch_size` - Maximum number of requests to process in this call.
+    ///
+    /// # Events
+    /// Emits `WithdrawalFulfilledEvent` for each fulfilled request.
+    pub fn process_withdrawal_queue(env: Env, agent: Address, batch_size: u32) -> u32 {
+        Self::require_initialized(&env);
+        Self::require_is_agent(&env);
+        agent.require_auth();
+
+        let config: QueueConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::QueueConfig)
+            .unwrap_or(QueueConfig { max_size: 0, ttl: 0 });
+
+        let current_timestamp = env.ledger().timestamp();
+
+        let mut order: Vec<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::QueueOrder)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut processed = 0u32;
+        let mut fulfilled_ids = Vec::new(&env);
+        let mut new_order = Vec::new(&env);
+
+        for id in order.iter() {
+            if processed >= batch_size {
+                new_order.push_back(id);
+                continue;
+            }
+
+            let mut request: WithdrawalRequest = env
+                .storage()
+                .instance()
+                .get(&DataKey::WithdrawalRequest(id))
+                .expect("withdrawal request missing from storage");
+
+            // Skip cancelled requests
+            if request.cancelled {
+                continue;
+            }
+
+            // Skip already fulfilled requests
+            if request.fulfilled {
+                continue;
+            }
+
+            // Skip expired requests
+            if config.ttl > 0 && current_timestamp > request.created_at + config.ttl {
+                continue;
+            }
+
+            // Fulfil the request
+            request.fulfilled = true;
+            env.storage()
+                .instance()
+                .set(&DataKey::WithdrawalRequest(id), &request);
+
+            fulfilled_ids.push_back(id);
+            processed += 1;
+
+            env.events().publish(
+                (TOPIC_WITHDRAWAL_FULFILLED,),
+                WithdrawalFulfilledEvent {
+                    request_id: id,
+                    user: request.user,
+                    amount: request.amount,
+                },
+            );
+        }
+
+        // Update the queue order: remove fulfilled entries
+        let mut final_order = Vec::new(&env);
+        for id in order.iter() {
+            if !fulfilled_ids.contains(id) {
+                final_order.push_back(id);
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::QueueOrder, &final_order);
+
+        processed
     }
 
     // ==========================================================================

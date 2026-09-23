@@ -192,3 +192,16 @@ pub const TOPIC_SUPPORTED_ASSETS_UPDATED: Symbol = symbol_short!("assets_up");
 /// Topic for `YieldAttributedEvent`, published by `update_total_assets` and
 /// `rebalance` to record per-user, per-protocol yield attribution.
 pub const TOPIC_YIELD_ATTRIBUTED: Symbol = symbol_short!("yld_attr");
+
+// ============================================================================
+// Withdrawal Queue (#757)
+// ============================================================================
+
+/// Topic for `WithdrawalQueuedEvent`, published by `queue_withdrawal`.
+pub const TOPIC_WITHDRAWAL_QUEUED: Symbol = symbol_short!("wq_add");
+/// Topic for `WithdrawalCancelledEvent`, published by `cancel_withdrawal_request`.
+pub const TOPIC_WITHDRAWAL_CANCELLED: Symbol = symbol_short!("wq_cancel");
+/// Topic for `WithdrawalFulfilledEvent`, published by `process_withdrawal_queue`.
+pub const TOPIC_WITHDRAWAL_FULFILLED: Symbol = symbol_short!("wq_done");
+/// Topic for `QueueConfigUpdatedEvent`, published by `set_queue_config`.
+pub const TOPIC_QUEUE_CONFIG_UPDATED: Symbol = symbol_short!("wq_cfg");
