@@ -3,6 +3,19 @@
 import React, { useState } from 'react';
 import { X, ArrowDownLeft, ArrowUpRight, Loader2, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { signWithFreighter } from '@/lib/freighter';
+import {
+  Server,
+  Contract,
+  Address,
+  nativeToScVal,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+} from '@stellar/stellar-sdk';
+
+const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
+const NETWORK_PASSPHRASE = process.env.NEXT_PUBLIC_SOROBAN_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015';
+const VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_VAULT_CONTRACT_ID || 'CDLZFC3SYJYD7M6LJEFAPCHRLHAFKP6WYTHRF3EGO5CYD3EP4GZGM37T';
 
 interface ActionModalProps {
   isOpen: boolean;
@@ -25,6 +38,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [txSuccess, setTxSuccess] = useState<boolean>(false);
   const [txHash, setTxHash] = useState<string>('');
+  const [txError, setTxError] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -37,20 +51,50 @@ export const ActionModal: React.FC<ActionModalProps> = ({
 
     setLoading(true);
     setTxSuccess(false);
+    setTxError('');
 
     try {
-      // Mock Soroban vault XDR creation and Freighter signature simulation
-      const mockXdr = 'AAAAAgAAAAD...SorobanVaultTx...';
-      const signed = await signWithFreighter(mockXdr);
+      const server = new Server(RPC_URL);
+      const account = await server.loadAccount(userPublicKey);
+      const contract = new Contract(VAULT_CONTRACT_ID);
+      const amountInBaseUnits = BigInt(Math.round(numAmount * 1e7));
 
-      // Simulate on-chain ledger confirmation
-      await new Promise((res) => setTimeout(res, 2000));
+      const txBuilder = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      });
 
-      const hash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
-      setTxHash(hash);
-      setTxSuccess(true);
-    } catch (err) {
+      const operation = contract.call(
+        type === 'deposit' ? 'deposit' : 'withdraw',
+        new Address(userPublicKey).toScVal(),
+        nativeToScVal(amountInBaseUnits, { type: 'i128' }),
+      );
+
+      const transaction = txBuilder
+        .addOperation(operation)
+        .setTimeout(300)
+        .build();
+
+      const preparedTx = await server.prepareTransaction(transaction);
+      const xdr = preparedTx.toXDR();
+
+      const signedXdr = await signWithFreighter(xdr, NETWORK_PASSPHRASE);
+      if (!signedXdr) {
+        setTxError('Transaction was not signed.');
+        return;
+      }
+
+      const result = await server.sendTransaction(TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE));
+
+      if (result.status === 'SUCCESS') {
+        setTxHash(result.hash);
+        setTxSuccess(true);
+      } else {
+        setTxError(`Transaction failed: ${result.status}`);
+      }
+    } catch (err: any) {
       console.error('Transaction execution failed:', err);
+      setTxError(err?.message || 'Transaction failed unexpectedly.');
     } finally {
       setLoading(false);
     }
@@ -60,6 +104,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
     setAmount('');
     setTxSuccess(false);
     setTxHash('');
+    setTxError('');
     onClose();
   };
 
@@ -85,7 +130,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
               Transaction Hash: {txHash.substring(0, 12)}...{txHash.substring(txHash.length - 8)}
             </p>
             <p className="text-xs text-emerald-400 bg-emerald-500/10 py-2 px-3 rounded-lg border border-emerald-500/20 mb-6">
-              Confirmed in ~3.8 seconds on Stellar Devnet
+              Confirmed on Stellar network
             </p>
             <button
               onClick={handleResetAndClose}
@@ -157,6 +202,13 @@ export const ActionModal: React.FC<ActionModalProps> = ({
                 <span className="text-slate-400">&lt; 0.00001 XLM</span>
               </div>
             </div>
+
+            {txError && (
+              <div className="mb-4 flex items-start gap-2 text-xs text-red-400 bg-red-500/10 p-3 rounded-xl border border-red-500/20">
+                <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+                <span>{txError}</span>
+              </div>
+            )}
 
             <button
               type="submit"

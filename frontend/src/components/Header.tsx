@@ -4,6 +4,7 @@ import React from 'react';
 import { Bot, Sparkles } from 'lucide-react';
 import { WalletConnect } from './WalletConnect';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { ThemeToggle } from './ThemeToggle';
 
 interface HeaderProps {
   publicKey: string | null;
@@ -45,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({ publicKey, onConnect, onDisconne
 
         {/* Wallet Connection & Language */}
         <div className="flex items-center gap-4">
+          <ThemeToggle />
           <LanguageSwitcher />
           <WalletConnect publicKey={publicKey} onConnect={onConnect} onDisconnect={onDisconnect} />
         </div>
