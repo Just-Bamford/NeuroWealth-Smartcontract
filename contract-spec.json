@@ -2086,7 +2086,7 @@
   "events": [
     {
       "name": "DepositEvent",
-      "topic": "unknown",
+      "topic": "deposit",
       "description": "Emitted by the contract.",
       "fields": [
         {
@@ -2108,7 +2108,7 @@
     },
     {
       "name": "WithdrawEvent",
-      "topic": "unknown",
+      "topic": "withdraw",
       "description": "Emitted by the contract.",
       "fields": [
         {
@@ -2284,7 +2284,7 @@
     },
     {
       "name": "VaultPausedEvent",
-      "topic": "unknown",
+      "topic": "paused",
       "description": "Emitted by the contract.",
       "fields": [
         {
@@ -2296,7 +2296,7 @@
     },
     {
       "name": "VaultUnpausedEvent",
-      "topic": "unknown",
+      "topic": "unpaused",
       "description": "Emitted by the contract.",
       "fields": [
         {
@@ -2308,7 +2308,7 @@
     },
     {
       "name": "EmergencyPausedEvent",
-      "topic": "unknown",
+      "topic": "emerg",
       "description": "Emitted by the contract.",
       "fields": [
         {

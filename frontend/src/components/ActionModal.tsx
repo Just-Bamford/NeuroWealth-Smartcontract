@@ -25,6 +25,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [txSuccess, setTxSuccess] = useState<boolean>(false);
   const [txHash, setTxHash] = useState<string>('');
+  const [error, setError] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -37,6 +38,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
 
     setLoading(true);
     setTxSuccess(false);
+    setError('');
 
     try {
       // Mock Soroban vault XDR creation and Freighter signature simulation
@@ -51,6 +53,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
       setTxSuccess(true);
     } catch (err) {
       console.error('Transaction execution failed:', err);
+      setError('Transaction failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -60,6 +63,7 @@ export const ActionModal: React.FC<ActionModalProps> = ({
     setAmount('');
     setTxSuccess(false);
     setTxHash('');
+    setError('');
     onClose();
   };
 
@@ -157,6 +161,12 @@ export const ActionModal: React.FC<ActionModalProps> = ({
                 <span className="text-slate-400">&lt; 0.00001 XLM</span>
               </div>
             </div>
+
+            {error && (
+              <div role="alert" className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                {error}
+              </div>
+            )}
 
             <button
               type="submit"
